@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#2563eb">
+<title>宝可梦作业激励</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<style>
+*{box-sizing:border-box;font-family:-apple-system, BlinkMacSystemFont, sans-serif;margin:0;padding:0}
+body{background:#111827;color:#fff;padding:16px;max-width:600px;margin:0 auto;padding-bottom:80px}
+.card{background:#1f2937;border-radius:16px;padding:16px;margin-bottom:12px}
+.btn{width:100%;padding:12px;border:none;border-radius:12px;font-size:16px;margin:6px 0}
+.btn-primary{background:#2563eb;color:white}
+.btn-success{background:#16a34a;color:white}
+.btn-warning{background:#ca8a04;color:white}
+.btn-danger{background:#dc2626;color:white}
+.btn-info{background:#0891b2;color:white}
+input,textarea{width:100%;padding:12px;border-radius:10px;border:none;margin:8px 0;color:#111}
+.tab{display:flex;gap:6px;margin-bottom:12px}
+.tab button{flex:1;padding:10px}
+.hidden{display:none}
+.poke-img{width:140px;height:140px;object-fit:contain;margin:8px auto;display:block;background:#333;border-radius:12px}
+.progress{width:100%;height:14px;background:#333;border-radius:9px;overflow:hidden;margin:8px 0}
+.progress>div{height:100%;background:#22c55e}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+</style>
+</head>
+<body>
+<h2>🎮 宝可梦作业激励</h2>
+<div class="tab">
+<button onclick="switchTab('kid')">👶 孩子面板</button>
+<button onclick="switchTab('parent')">👨‍👩‍👧 家长面板</button>
+</div>
+
+<!-- 孩子面板 -->
+<div id="tab-kid" class="panel">
+<div class="card">
+<h3>✨ 当前出战宝可梦</h3>
+<img class="poke-img" id="pokeImg" src="" alt="宝可梦">
+<div id="pokemon-info">加载中</div>
+<div class="progress"><div id="expBar" style="width:0%"></div></div>
+<div id="skillList"></div>
+</div>
+
+<div class="card">
+<h3>📝 提交作业打卡</h3>
+<textarea id="workDesc" placeholder="写清楚今天完成了哪些作业"></textarea>
+<input type="file" id="photoInput" accept="image/*">
+<button class="btn btn-primary" onclick="submitCheckin()">提交打卡</button>
+<div id="checkinTip"></div>
+</div>
+
+<div class="card">
+<h3>🔥 连续打卡：<span id="streak">0</span>天</h3>
+<p>连续7天打卡领取连击大奖！</p>
+<p id="timeBonusTip">⏰ 21:30前提交 = 1.2倍经验加成</p>
+</div>
+
+<div class="card">
+<h3>🎒 背包道具</h3>
+<p>捕捉球：<span id="ballCount">0</span>｜挑战券：<span id="ticketCount">0</span></p>
+</div>
+
+<div class="card">
+<h3>📍 周末活动</h3>
+<div class="grid">
+<button class="btn btn-warning" onclick="gotoGym()">道馆挑战</button>
+<button class="btn btn-info" onclick="wildCatch()">野外捕捉</button>
+</div>
+<p id="weekendTip"></p>
+</div>
+
+<div class="card">
+<h3>📖 图鉴</h3>
+<div id="pokedex"></div>
+</div>
+
+<div class="card">
+<h3>🔮 封印宝可梦</h3>
+<div id="sealedList"></div>
+</div>
+</div>
+
+<!-- 家长面板 -->
+<div id="tab-parent" class="panel hidden">
+<div class="card">
+<h3>🔐 家长验证</h3>
+<input type="password" id="parentPwd" placeholder="输入家长密码">
+<button class="btn btn-success" onclick="authParent()">登录管理</button>
+</div>
+<div id="parentAdmin" class="hidden">
+<div class="card">
+<h3>待审核打卡</h3>
+<div id="pendingList"></div>
+</div>
+<div class="card">
+<button class="btn btn-warning" onclick="exportData()">📤 导出备份</button>
+<button class="btn btn-info" onclick="importData()">📥 导入存档</button>
+<button class="btn btn-danger" onclick="clearStreak()">⚠️ 重置连续打卡</button>
+</div>
+</div>
+</div>
+
+<script>
+// ========== 配置区，你可以自由修改 ==========
+const CONFIG = {
+  parentPassword: "123456",
+  baseExp: 12,
+  bonusHour: 21,
+  bonusMin: 30,
+  streakGoal:7,
+  sealDays:7 //卡比兽封印天数
+}
+
+// 宝可梦进化&招式表
+const POKE_DB = [
+  {name:"妙蛙种子",lv:1,nextLv:16,evolveTo:"妙蛙草",skills:["撞击","叫声"]},
+  {name:"妙蛙草",lv:16,nextLv:32,evolveTo:"妙蛙花",skills:["撞击","叫声","藤鞭"]},
+  {name:"妙蛙花",lv:32,nextLv:999,evolveTo:null,skills:["撞击","叫声","藤鞭","阳光烈焰"]},
+  {name:"卡比兽",lv:1,nextLv:999,evolveTo:null,skills:["撞击","睡觉","泰山压顶"]}
+]
+
+let state = JSON.parse(localStorage.getItem("pokeHomeworkSave")) || {
+  streak:0,
+  lastCheckDay:null,
+  starter:"妙蛙种子",
+  currentPoke:{name:"妙蛙种子",lv:1,exp:0,expNext:35},
+  pokedex:["妙蛙种子"],
+  balls:3,
+  tickets:1,
+  pending:[],
+  history:[],
+  sealed:[],
+  photoCache:{}
+}
+function save(){
+  localStorage.setItem("pokeHomeworkSave", JSON.stringify(state))
+}
+function now(){return new Date()}
+function dayKey(d){return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`}
+function isWeekend(){
+  const w = now().getDay()
+  return w===0 || w===6
+}
+function isBonusTime(){
+  const t = now()
+  const h = t.getHours(), m = t.getMinutes()
+  return h < CONFIG.bonusHour || (h===CONFIG.bonusHour && m <= CONFIG.bonusMin)
+}
+
+function getPokeData(name){
+  return POKE_DB.find(x=>x.name === name)
+}
+
+function switchTab(tab){
+  document.querySelectorAll(".panel").forEach(p=>p.classList.add("hidden"))
+  document.getElementById(`tab-${tab}`).classList.remove("hidden")
+}
+
+function renderAll(){
+  renderKid()
+  if(!document.getElementById("parentAdmin").classList.contains("hidden")) renderPending()
+}
+
+function renderKid(){
+  const p = state.currentPoke
+  const db = getPokeData(p.name)
+  document.getElementById("pokemon-info").innerHTML = `
+    <p>${p.name}｜Lv.${p.lv}</p>
+    <p>经验 ${p.exp} / ${p.expNext}</p>
+  `
+  document.getElementById("expBar").style.width = `${(p.exp/p.expNext)*100}%`
+  document.getElementById("pokeImg").src = ""
+  document.getElementById("skillList").innerText = "招式："+(db?.skills.join("、")||"无")
+  document.getElementById("streak").innerText = state.streak
+  document.getElementById("ballCount").innerText = state.balls
+  document.getElementById("ticketCount").innerText = state.tickets
+
+  //图鉴
+  document.getElementById("pokedex").innerText = state.pokedex.join("｜")
+  //封印列表
+  let sealHtml = ""
+  state.sealed.forEach((s,idx)=>{
+    const end = new Date(s.unlockTime)
+    const left = Math.ceil((end - now()) / (1000*3600*24))
+    if(left <=0){
+      if(!state.pokedex.includes(s.name)) state.pokedex.push(s.name)
+      sealHtml += `<p>✅ ${s.name} 已解锁！</p>`
+      state.sealed.splice(idx,1)
+    }else{
+      sealHtml += `<p>🔒 ${s.name} 还需 ${left} 天激活</p>`
+    }
+  })
+  document.getElementById("sealedList").innerHTML = sealHtml
+  save()
+
+  //周末提示
+  document.getElementById("weekendTip").innerText = isWeekend() ? "✅ 今天是周末，可以挑战道馆和捕捉！" : "❌ 只有周六、周日开放野外和道馆"
+}
+
+let pendingPhoto = null
+document.getElementById("photoInput").onchange = function(e){
+  const f = e.target.files[0]
+  const reader = new FileReader()
+  reader.onload = ev=> pendingPhoto = ev.target.result
+  reader.readAsDataURL(f[0])
+}
+
+function submitCheckin(){
+  const desc = document.getElementById("workDesc").value.trim()
+  if(!desc){alert("请填写作业内容");return}
+  const item = {
+    id: Date.now(),
+    desc,
+    photo: pendingPhoto,
+    time: now().toISOString(),
+    bonus: isBonusTime(),
+    passed:false
+  }
+  state.pending.push(item)
+  pendingPhoto=null
+  document.getElementById("photoInput").value=""
+  document.getElementById("workDesc").value=""
+  document.getElementById("checkinTip").innerText="✅ 提交成功，等待家长审核"
+  save();renderAll()
+}
+
+function authParent(){
+  const pwd = document.getElementById("parentPwd").value
+  if(pwd === CONFIG.parentPassword){
+    document.getElementById("parentAdmin").classList.remove("hidden")
+    renderPending()
+  }else alert("密码错误")
+}
+
+function renderPending(){
+  const wrap = document.getElementById("pendingList")
+  wrap.innerHTML=""
+  state.pending.forEach((it,idx)=>{
+    const d = new Date(it.time)
+    wrap.innerHTML += `
+    <div style="padding:8px;border:1px solid #444;border-radius:8px;margin:6px 0">
+      <p>${it.desc}</p>
+      <small>${d.toLocaleString()} ${it.bonus?"【1.2倍加成】":"无加成"}</small>
+      ${it.photo ? `<img src="${it.photo}" style="max-width:100%;border-radius:8px;margin-top:4px">`:""}
+      <br>
+      <button class="btn btn-success" onclick="approve(${idx})">✅ 通过</button>
+      <button class="btn btn-danger" onclick="reject(${idx})">❌ 驳回</button>
+    </div>
+    `
+  })
+}
+
+function approve(idx){
+  const it = state.pending[idx]
+  let gain = CONFIG.baseExp
+  if(it.bonus) gain = Math.floor(gain * 1.2)
+  let p = state.currentPoke
+  p.exp += gain
+  //升级循环
+  while(p.exp >= p.expNext){
+    p.exp -= p.expNext
+    p.lv +=1
+    p.expNext = Math.floor(p.expNext * 1.45)
+    const db = getPokeData(p.name)
+    if(db && db.evolveTo && p.lv >= db.nextLv){
+      if(confirm(`🎉 ${p.name}达到等级，可以进化为【${db.evolveTo}】！是否进化？`)){
+        p.name = db.evolveTo
+        if(!state.pokedex.includes(p.name)) state.pokedex.push(p.name)
+      }
+    }
+  }
+  //连续打卡逻辑
+  const today = dayKey(now())
+  if(state.lastCheckDay !== today){
+    const yest = dayKey(new Date(Date.now()-86400000))
+    if(state.lastCheckDay === yest) state.streak +=1
+    else state.streak = 1
+    state.lastCheckDay = today
+    //7天连击大奖
+    if(state.streak === CONFIG.streakGoal){
+      alert("🎊 连击大奖！连续打卡7天！获得捕捉球x5，挑战券x2！")
+      state.balls +=5
+      state.tickets +=2
+    }
+  }
+  state.history.push({...it,gain,passed:true})
+  state.pending.splice(idx,1)
+  save();renderAll()
+  alert(`✅ 审核通过！获得 ${gain} 经验`)
+}
+function reject(idx){
+  state.pending.splice(idx,1)
+  save();renderAll()
+  alert("❌ 打卡驳回，无经验")
+}
+
+function clearStreak(){
+  if(confirm("确定重置连续打卡天数？")){
+    state.streak=0; save();renderAll()
+  }
+}
+
+function exportData(){
+  const blob = new Blob([JSON.stringify(state,null,2)],{type:"application/json"})
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href=url;a.download="宝可梦作业存档.json";a.click()
+}
+function importData(){
+  const inp = document.createElement("input")
+  inp.type="file"
+  inp.accept=".json"
+  inp.onchange=e=>{
+    const fr = new FileReader()
+    fr.onload=ev=>{
+      try{
+        state = JSON.parse(ev.target.result)
+        save();renderAll()
+        alert("存档导入成功！")
+      }catch(err){alert("存档文件损坏")}
+    }
+    fr.readAsText(e.target.files[0])
+  }
+  inp.click()
+}
+
+//周末玩法
+function gotoGym(){
+  if(!isWeekend()){alert("只有周末可以打道馆！");return}
+  if(state.tickets <=0){alert("挑战券不足！继续打卡获取");return}
+  state.tickets -=1
+  alert("🏆 道馆挑战成功！获得【封印卡比兽】，7天后自动解锁！")
+  const unlock = new Date(Date.now() + CONFIG.sealDays * 24*3600*1000)
+  state.sealed.push({name:"卡比兽",unlockTime:unlock.toISOString()})
+  save();renderAll()
+}
+function wildCatch(){
+  if(!isWeekend()){alert("只有周末可以野外捕捉！");return}
+  if(state.balls <=0){alert("捕捉球不够！打卡拿球");return}
+  state.balls -=1
+  const pool = ["皮卡丘","小火龙","杰尼龟"]
+  const r = pool[Math.floor(Math.random()*pool.length)]
+  if(Math.random()>0.4){
+    alert(`捕捉成功！抓到了${r}，已加入图鉴！（1级，只能靠作业练级）`)
+    if(!state.pokedex.includes(r)) state.pokedex.push(r)
+  }else{
+    alert("逃跑了！下次再来吧")
+  }
+  save();renderAll()
+}
+
+//PWA注册ServiceWorker（离线缓存基础）
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(e=>{})
+}
+
+renderAll()
+</script>
+</body>
+</html>
